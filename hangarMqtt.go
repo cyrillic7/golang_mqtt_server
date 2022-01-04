@@ -11,6 +11,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/iris-contrib/middleware/cors"
 	"github.com/kataras/iris/v12"
 )
 
@@ -660,27 +661,28 @@ func AH_UavLandReq(dnest string) {
 	}
 }
 
-// func Cors(ctx iris.Context) {
-// 	ctx.Header("Access-Control-Allow-Origin", "*")
-// 	ctx.Header("Access-Control-Allow-Credentials", "true")
-// 	if ctx.Request().Method == "OPTIONS" {
-// 		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-// 		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-// 		ctx.StatusCode(204)
-// 		return
-// 	}
-// 	ctx.Next()
-// }
 func Cors(ctx iris.Context) {
 	ctx.Header("Access-Control-Allow-Origin", "*")
+	ctx.Header("Access-Control-Allow-Credentials", "true")
 	if ctx.Request().Method == "OPTIONS" {
 		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Api, Accept, Authorization, Version, Token")
+		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
 		ctx.StatusCode(204)
 		return
 	}
 	ctx.Next()
 }
+
+// func Cors(ctx iris.Context) {
+// 	ctx.Header("Access-Control-Allow-Origin", "*")
+// 	if ctx.Request().Method == "OPTIONS" {
+// 		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+// 		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Api, Accept, Authorization, Version, Token")
+// 		ctx.StatusCode(204)
+// 		return
+// 	}
+// 	ctx.Next()
+// }
 
 // func cors(ctx iris.Context) {
 // 	middleware.Cors(ctx)
@@ -712,26 +714,30 @@ func Cors(ctx iris.Context) {
 // 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
 // 	ctx.Next()
 // }
+// func CRS(ctx iris.Context) { //<!-- -->
+// 	ctx.Header("Access-Control-Allow-Origin", "*")
+// 	ctx.Header("Access-Control-Allow-Credentials", "true")
+// 	if ctx.Method() == iris.MethodOptions { //<!-- -->
+// 		ctx.Header("Access-Control-Methods", "POST, PUT, PATCH, DELETE")
+// 		ctx.Header("Access-Control-Allow-Headers", "Access-Control-Allow-Origin,Content-Type,X-API-CHANNEL,Token")
+// 		ctx.Header("Access-Control-Max-Age", "86400")
+// 		ctx.StatusCode(iris.StatusNoContent)
+// 		return
+// 	}
+// 	ctx.Next()
+// }
 
 func main() {
-	app := iris.Default()
-	// 解决跨域的主要代码
-	// c := cors.New(cors.Options{
-	// 	AllowedOrigins:   []string{"*"},
-	// 	AllowCredentials: true,
-	// 	Debug:            true,
-	// })
-	// app.WrapRouter(c.ServeHTTP)
-	//app.Use(recover.New())
-	app.Use(Cors)
-	// api := app.Party("/api")
-	// api.Get("/index", IndexHandler)
-	//连接MQTT服务器
-	// crs := cors.New(cors.Options{
-	// 	AllowedOrigins:   []string{"*"}, //允许通过的主机名称
-	// 	AllowCredentials: true,
-	// })
-
+	app := iris.New() //iris.Default()
+	opts := cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedHeaders: []string{"Content-Type"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "HEAD"},
+		ExposedHeaders: []string{"X-Header"},
+		MaxAge:         int((24 * time.Hour).Seconds()),
+		// Debug:          true,
+	}
+	app.UseRouter(cors.New(opts))
 	mqttConnect()
 	defer client.Disconnect(250) //注册销毁
 
@@ -774,6 +780,7 @@ func main() {
 	// go pullWeatherStations(3)
 	// go pullWeatherStations(4)
 	//v1 := app.Party("/", crs).AllowMethods(iris.MethodOptions) // <- 对于预检很重要。
+	//v1 := app.Party("/", crs).AllowMethods(iris.MethodOptions)
 	{
 		//打开防雨棚
 		app.Get("MN_ACTION/CanopyOpen", func(ctx iris.Context) {
