@@ -173,7 +173,7 @@ type HGMission struct {
 	SendSDK     string      `json:"send_sdk"`   //M-O接收
 	MType       string      `json:"type"`       //类型
 	MData       interface{} `json:"data"`       //返回数据
-	State       int         `json:"state"`      //状态码
+	State       int         `json:"status"`     //状态码
 	MissionTime string      `json:"time"`       //时间
 }
 
@@ -193,6 +193,26 @@ type HGWeatherMsg struct {
 	Data HGWeather `json:"data"`
 }
 
+//机库状态
+type StatusType int
+
+const (
+	STATUS_CHECK                 StatusType = 0  //机库自检
+	STATUS_MISSION_START         StatusType = 1  //任务开始
+	STATUS_HG_OPENING            StatusType = 2  //开库中
+	STATUS_HG_OPEN               StatusType = 3  //机库打开
+	STATUS_CLOSEING              StatusType = 4  //关库中
+	STATUS_CLOSEED               StatusType = 5  //机库关闭
+	STATUS_UAV_RETURN            StatusType = 6  //无人机返航
+	STATUS_UAV_CHARGING          StatusType = 7  //无人机充电中
+	STATUS_UAV_CHARGING_DONE     StatusType = 8  //无人机充电完成
+	STATUS_UAV_CHARGING_NULL     StatusType = 9  //未检测到电池
+	STATUS_UAV_CHARGING_ABNORMAL StatusType = 10 //充电异常
+)
+
+//机库状态map
+var g_HGStatusMap = make(map[string]StatusType)
+
 //var g_HGheart HGHeartMsg
 var g_HGheartMap = make(map[string]*HGHeartMsg)
 
@@ -202,8 +222,6 @@ var g_HGMissionList = list.New()
 
 //气象
 var g_HGWeather = make(map[string]*HGWeather)
-
-//
 
 //机库报警
 var g_CanpoyWarning bool = false
@@ -247,6 +265,7 @@ var onMessage mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 				fmt.Println("value DNEST/broadcast : ", value)
 			} else {
 				g_HGheartMap[msgdevice.Datas.Device_serial] = &HGHeartMsg{msgdevice.Datas.Device_serial, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ""}
+				g_HGStatusMap[msgdevice.Datas.Device_serial] = STATUS_UAV_CHARGING_NULL
 			}
 		}
 
@@ -410,53 +429,89 @@ var onMessage mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 			//处理找到的value
 			fmt.Println(value)
 			//g_HGMissionMap[msgMission.DeviceID] = &msgMission
-			fmt.Println("g_HGMissionList --- len : ", g_HGMissionList.Len())
+			fmt.Println("qqqqqqqqqqqqqqqqqqqqqqqqqqqqqmsgMission.MType : ", msgMission.MType)
 			g_HGMissionList.PushBack(msgMission)
-			switch msgMission.MType {
-			case "airport_check": //自检
+			switch {
+			case msgMission.MType == "airport_check": //自检
 				{
+					fmt.Println("casetype 1  : ", "airport_check")
 					go AH_HG_Inspectionself(msgMission.DeviceID)
+					g_HGStatusMap[msgMission.DeviceID] = STATUS_CHECK
+					return
 				}
-				fallthrough
-			case "airport_open": //开库
+			case msgMission.MType == "airport_open": //开库
 				{
+					fmt.Println("casetype 2  : ", "airport_open")
 					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 41, 0, 0, 0, 0, 0, true)
+					//go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 82, 0, 0, 0, 0, 0, false)
+					g_HGStatusMap[msgMission.DeviceID] = STATUS_MISSION_START
+					return
 				}
-				fallthrough
-			case "airport_close": //关库
+
+			case msgMission.MType == "airport_close": //关库
 				{
-					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 125, 0, 0, 0, 0, 0, true)
-					time.Sleep(time.Duration(20) * time.Second)
+					fmt.Println("casetype 3  : ", "airport_close")
+					//go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 125, 0, 0, 0, 0, 0, true)
+					//time.Sleep(time.Duration(20) * time.Second)
 					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 42, 0, 0, 0, 0, 0, true)
+					g_HGStatusMap[msgMission.DeviceID] = STATUS_CLOSEING
+					return
 				}
-				fallthrough
-			case "airport_shout": //喊话
+
+			case msgMission.MType == "airport_shout": //喊话
 				{
 					shoutID := msgMission.MData.(float64)
+					// int5, err := strconv.Atoi(shoutID)
+					// if err != nil {
+					// 	fmt.Println(err)
+					// }
 					go pushVoiceAlam(msgMission.DeviceID, int(shoutID))
+					return
 				}
-				fallthrough
-			case "airport_powerOn": //充电
+			case msgMission.MType == "chargebar_open": //充电棒打开
 				{
-					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 121, 0, 0, 0, 0, 0, true)
-				}
-				fallthrough
-			case "airport_powerOff": //停止充电
-				{
-					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 123, 0, 0, 0, 0, 0, true)
-				}
-				fallthrough
-			case "uav_retuen": //返航
-				{
-					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 41, 0, 0, 0, 0, 0, true)
+					fmt.Println("casetype 33  : ", "chargebar_open")
 					go pushOperationModuleMsg(msgMission.DeviceID, 1, 3, 82, 0, 0, 0, 0, 0, true)
+					return
 				}
-				fallthrough
-			case "uav_land_request":
+			case msgMission.MType == "chargebar_close": //充电棒收紧
+				{
+					fmt.Println("casetype 44  : ", "chargebar_close")
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 3, 81, 0, 0, 0, 0, 0, true)
+					return
+				}
+			// 	fallthrough
+			case msgMission.MType == "airport_powerOn": //充电
+				{
+					fmt.Println("casetype 4  : ", "airport_powerOn")
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 3, 81, 0, 0, 0, 0, 0, false)
+					//time.Sleep(time.Duration(25) * time.Second)
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 4, 121, 0, 0, 0, 0, 0, true)
+					return
+				}
+
+			case msgMission.MType == "airport_powerOff": //停止充电
+				{
+					fmt.Println("casetype 5  : ", "airport_powerOff")
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 4, 123, 0, 0, 0, 0, 0, true)
+					return
+				}
+
+			case msgMission.MType == "uav_retuen": //返航
+				{
+					fmt.Println("casetype 6  : ", "uav_retuen")
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 2, 41, 0, 0, 0, 0, 0, true)
+					go pushOperationModuleMsg(msgMission.DeviceID, 1, 3, 82, 0, 0, 0, 0, 0, false)
+					g_HGStatusMap[msgMission.DeviceID] = STATUS_UAV_RETURN
+					return
+				}
+
+			case msgMission.MType == "uav_land_request": //降落请求
 				{
 					go AH_UavLandReq(msgMission.DeviceID)
+					return
 				}
-				fallthrough
+
 			default:
 				{
 
@@ -480,8 +535,8 @@ func AH_HeartbeatPublish() {
 	for range timer.C {
 		for key, value := range g_HGheartMap {
 			fmt.Println("Key:", key, "Value:", value)
-			charges := convertToBin(value.Charge)
-			fmt.Println("charges ---------------------  :", charges)
+			// charges := convertToBin(value.Charge)
+			// fmt.Println("charges ---------------------  :", charges)
 			value.FlowState = 0
 			value.HeartTime = time.Now().Format("2006-01-02 15:04:05")
 			jsonStr, err := json.Marshal(value)
@@ -491,6 +546,9 @@ func AH_HeartbeatPublish() {
 			//topicdownlinkrequest := g_dnest + "/downlink/request"
 			//fmt.Println("jsonStr == ", jsonStr)
 			client.Publish(topocAHheartBeat, 0, false, jsonStr)
+
+			// _tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[key].Charge))
+			// fmt.Println("cmdheartbeat:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
 		}
 	}
 }
@@ -537,10 +595,10 @@ func AH_HG_Inspectionself(HGDev string) {
 			}
 
 			//ups
-			if valueH.Power != 0 {
-				missionreqs.Ups = valueH.Power
-				bInSelf = false
-			}
+			// if valueH.Power != 0 {
+			// 	missionreqs.Ups = valueH.Power
+			// 	bInSelf = false
+			// }
 		}
 		newInterReq := interface{}(missionreqs).(MissionDataReq)
 		//newInterface1 = missionreqs
@@ -583,16 +641,17 @@ func AH_HG_Inspectionself(HGDev string) {
 	}
 }
 
+//降落请求
 func AH_UavLandReq(dnest string) {
 	valueH, ok := g_HGheartMap[dnest]
 	if ok {
 		fmt.Println("AH_HG_Inspectionself Value:", valueH)
-		if valueH.Canopy == 2 && valueH.Posbar == 2 {
+		if valueH.Canopy == 2 && valueH.Posbar == 1 {
 			AH_mission_response(dnest, "allow", 200, "uav_land_request")
 		} else {
 			if valueH.Canopy == 1 {
 				AH_mission_response(dnest, "防雨棚未开启", 400, "uav_land_request")
-			} else if valueH.Posbar == 1 {
+			} else if valueH.Posbar == 2 {
 				AH_mission_response(dnest, "充电杆未放开", 400, "uav_land_request")
 			} else {
 				AH_mission_response(dnest, "未知错误", 400, "uav_land_request")
@@ -601,9 +660,78 @@ func AH_UavLandReq(dnest string) {
 	}
 }
 
+// func Cors(ctx iris.Context) {
+// 	ctx.Header("Access-Control-Allow-Origin", "*")
+// 	ctx.Header("Access-Control-Allow-Credentials", "true")
+// 	if ctx.Request().Method == "OPTIONS" {
+// 		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+// 		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+// 		ctx.StatusCode(204)
+// 		return
+// 	}
+// 	ctx.Next()
+// }
+func Cors(ctx iris.Context) {
+	ctx.Header("Access-Control-Allow-Origin", "*")
+	if ctx.Request().Method == "OPTIONS" {
+		ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+		ctx.Header("Access-Control-Allow-Headers", "Content-Type, Api, Accept, Authorization, Version, Token")
+		ctx.StatusCode(204)
+		return
+	}
+	ctx.Next()
+}
+
+// func cors(ctx iris.Context) {
+// 	middleware.Cors(ctx)
+// }
+
+// // InitRouter 路由初始化
+// func InitRouter() *iris.Application {
+// 	r := iris.New()
+// 	r.Use(recover.New())
+
+// 	// cors
+// 	r.Use(cors)
+
+// 	// common
+// 	common := r.Party("/")
+// 	{
+// 		common.Options("*", func(ctx iris.Context) {
+// 			ctx.Next()
+// 		})
+// 	}
+
+// 	return r
+// }
+
+// func Cors(ctx iris.Context) {
+// 	ctx.Header("Access-Control-Allow-Origin", "http://localhost:10901")
+// 	ctx.Header("Access-Control-Allow-Credentials", "true")
+// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+// 	ctx.Next()
+// }
+
 func main() {
 	app := iris.Default()
+	// 解决跨域的主要代码
+	// c := cors.New(cors.Options{
+	// 	AllowedOrigins:   []string{"*"},
+	// 	AllowCredentials: true,
+	// 	Debug:            true,
+	// })
+	// app.WrapRouter(c.ServeHTTP)
+	//app.Use(recover.New())
+	app.Use(Cors)
+	// api := app.Party("/api")
+	// api.Get("/index", IndexHandler)
 	//连接MQTT服务器
+	// crs := cors.New(cors.Options{
+	// 	AllowedOrigins:   []string{"*"}, //允许通过的主机名称
+	// 	AllowCredentials: true,
+	// })
+
 	mqttConnect()
 	defer client.Disconnect(250) //注册销毁
 
@@ -645,385 +773,386 @@ func main() {
 	// go pullWeatherStations(2)
 	// go pullWeatherStations(3)
 	// go pullWeatherStations(4)
+	//v1 := app.Party("/", crs).AllowMethods(iris.MethodOptions) // <- 对于预检很重要。
+	{
+		//打开防雨棚
+		app.Get("MN_ACTION/CanopyOpen", func(ctx iris.Context) {
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
+			fmt.Print("/MN_ACTION/CanopyOpen/============= \n")
 
-	//打开防雨棚
-	app.Get("/MN_ACTION/CanopyOpen", func(ctx iris.Context) {
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
-		fmt.Print("/MN_ACTION/CanopyOpen/============= \n")
+			dnest := ctx.URLParam("dnest")
+			// inttemp, err := strconv.Atoi(TempType)
+			// if err != nil {
+			// 	panic(err)
+			// }
 
-		dnest := ctx.URLParam("dnest")
-		// inttemp, err := strconv.Atoi(TempType)
-		// if err != nil {
-		// 	panic(err)
-		// }
+			fmt.Print(dnest + "\n")
 
-		fmt.Print(dnest + "\n")
+			pushOperationModuleMsg(dnest, 1, 2, 41, 0, 0, 0, 0, 0, false)
 
-		pushOperationModuleMsg(dnest, 1, 2, 41, 0, 0, 0, 0, 0, false)
-
-		//ctx.JSON(Missionlives)
-		ctx.JSON(iris.Map{
-			"msg":    "CanopyOpen",
-			"data":   "执行成功",
-			"status": 200,
-		})
-	})
-
-	//关闭防雨棚
-	app.Get("/MN_ACTION/CanopyClose", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/CanopyClose/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
-
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 2, 42, 0, 0, 0, 0, 0, false)
-
-		//ctx.JSON(Missionlives)
-		ctx.JSON(iris.Map{
-			"msg":    "CanopyClose",
-			"data":   "执行成功",
-			"status": 200,
-		})
-	})
-
-	//无人机开机
-	app.Get("/MN_ACTION/UavStartUp", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/UavStartUp/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
-		dnest := ctx.URLParam("dnest")
-
-		pushOperationModuleMsg(dnest, 1, 4, 124, 0, 0, 0, 0, 0, false)
-
-		ctx.JSON(iris.Map{
-			"msg":    "UavStartUp",
-			"data":   "执行成功",
-			"status": 200,
+			//ctx.JSON(Missionlives)
+			ctx.JSON(iris.Map{
+				"msg":    "CanopyOpen",
+				"data":   "执行成功",
+				"status": 200,
+			})
 		})
 
-		//ctx.JSON(Missionlives)
-	})
+		//关闭防雨棚
+		app.Get("MN_ACTION/CanopyClose", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/CanopyClose/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-	//无人机关机
-	app.Get("/MN_ACTION/UavShutDown", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/UavShutDown/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 2, 42, 0, 0, 0, 0, 0, false)
 
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 4, 125, 0, 0, 0, 0, 0, false)
-
-		//ctx.JSON(Missionlives)
-		ctx.JSON(iris.Map{
-			"msg":    "UavShutDown",
-			"data":   "执行成功",
-			"status": 200,
+			//ctx.JSON(Missionlives)
+			ctx.JSON(iris.Map{
+				"msg":    "CanopyClose",
+				"data":   "执行成功",
+				"status": 200,
+			})
 		})
-	})
 
-	//归中杆收
-	app.Get("/MN_ACTION/PowerRodIn", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/PowerRodIn/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+		//无人机开机
+		app.Get("MN_ACTION/UavStartUp", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/UavStartUp/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
+			dnest := ctx.URLParam("dnest")
 
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 3, 81, 0, 0, 0, 0, 0, false)
+			pushOperationModuleMsg(dnest, 1, 4, 124, 0, 0, 0, 0, 0, false)
 
-		//ctx.JSON(Missionlives)
-	})
+			ctx.JSON(iris.Map{
+				"msg":    "UavStartUp",
+				"data":   "执行成功",
+				"status": 200,
+			})
 
-	//归中杆放
-	app.Get("/MN_ACTION/PowerRodOut", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/PowerRodOut/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 3, 82, 0, 0, 0, 0, 0, false)
+		//无人机关机
+		app.Get("MN_ACTION/UavShutDown", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/UavShutDown/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 4, 125, 0, 0, 0, 0, 0, false)
 
-	//开始充电
-	app.Get("/MN_ACTION/PowerOn", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/PowerOn/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+			ctx.JSON(iris.Map{
+				"msg":    "UavShutDown",
+				"data":   "执行成功",
+				"status": 200,
+			})
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 3, 121, 0, 0, 0, 0, 0, false)
+		//归中杆收
+		app.Get("MN_ACTION/PowerRodIn", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/PowerRodIn/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 3, 81, 0, 0, 0, 0, 0, false)
 
-	//停止充电
-	app.Get("/MN_ACTION/PowerOff", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/PowerOn/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushOperationModuleMsg(dnest, 1, 3, 123, 0, 0, 0, 0, 0, false)
+		//归中杆放
+		app.Get("MN_ACTION/PowerRodOut", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/PowerRodOut/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 3, 82, 0, 0, 0, 0, 0, false)
 
-	//关闭安卓电源
-	app.Get("/MN_ACTION/AndroidPoweroff", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweroff/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 2, 0)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//开始充电
+		app.Get("MN_ACTION/PowerOn", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/PowerOn/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 3, 121, 0, 0, 0, 0, 0, false)
 
-	//开启安卓电源
-	app.Get("/MN_ACTION/AndroidPoweron", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 2, 1)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//停止充电
+		app.Get("MN_ACTION/PowerOff", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/PowerOn/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushOperationModuleMsg(dnest, 1, 3, 123, 0, 0, 0, 0, 0, false)
 
-	//关闭遥控器电源
-	app.Get("/MN_ACTION/RemoteCtlPowerooff", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 4, 0)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//关闭安卓电源
+		app.Get("MN_ACTION/AndroidPoweroff", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweroff/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 2, 0)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-	//打开遥控器电源
-	app.Get("/MN_ACTION/RemoteCtlPoweron", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 4, 1)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//开启安卓电源
+		app.Get("MN_ACTION/AndroidPoweron", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 2, 1)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-	//关闭照明灯电源
-	app.Get("/MN_ACTION/FloodlightPoweroff", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 5, 0)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//关闭遥控器电源
+		app.Get("MN_ACTION/RemoteCtlPowerooff", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 4, 0)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-	//打开照明灯电源
-	app.Get("/MN_ACTION/FloodlightPoweron", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
-		pushDevOperationModuleMsg(dnest, 5, 1)
-		//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
+		//打开遥控器电源
+		app.Get("MN_ACTION/RemoteCtlPoweron", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 4, 1)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-	//Android 电源状态获取
-	app.Get("/MN_STATE/AndroidPowerStatus", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			//ctx.JSON(Missionlives)
+		})
 
-		dnest := ctx.URLParam("dnest")
+		//关闭照明灯电源
+		app.Get("MN_ACTION/FloodlightPoweroff", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		devStateMsgs := devStateMsg{2, devStateMsgData{2}}
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 5, 0)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-		fmt.Println(devStateMsgs)
-		jsonStr, err := json.Marshal(devStateMsgs)
-		if err != nil {
-			log.Fatal()
-		}
-		topicdownlinkrequest := dnest + "/downlink/request"
-		fmt.Println(jsonStr)
-		client.Publish(topicdownlinkrequest, 0, false, jsonStr)
-		time.Sleep(time.Duration(3) * time.Second)
+			//ctx.JSON(Missionlives)
+		})
 
-		//ctx.JSON(Missionlives)
-	})
+		//打开照明灯电源
+		app.Get("MN_ACTION/FloodlightPoweron", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPoweron/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-	//照明灯电源状态获取
-	app.Get("/MN_STATE/FloodlightPowerStatus", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			dnest := ctx.URLParam("dnest")
+			pushDevOperationModuleMsg(dnest, 5, 1)
+			//pushOperationModuleMsg(1, 3, 82, 0, 0, 0, 0, 0)
 
-		dnest := ctx.URLParam("dnest")
-		devStateMsgs := devStateMsg{2, devStateMsgData{5}}
+			//ctx.JSON(Missionlives)
+		})
 
-		fmt.Println(devStateMsgs)
-		jsonStr, err := json.Marshal(devStateMsgs)
-		if err != nil {
-			log.Fatal()
-		}
-		topicdownlinkrequest := dnest + "/downlink/request"
-		fmt.Println(jsonStr)
-		client.Publish(topicdownlinkrequest, 0, false, jsonStr)
-		time.Sleep(time.Duration(3) * time.Second)
+		//Android 电源状态获取
+		app.Get("MN_STATE/AndroidPowerStatus", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
 
-	//获取空调温度
-	app.Get("/MN_STATE/AirCdtTemp", func(ctx iris.Context) {
-		fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		if ctx.Request().Method == "OPTIONS" {
-			ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
-			ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
-			ctx.StatusCode(204)
-			return
-		}
-		ctx.Next()
+			devStateMsgs := devStateMsg{2, devStateMsgData{2}}
 
-		dnest := ctx.URLParam("dnest")
-		TempType := ctx.Params().Get("temptype")
-		inttemp, err := strconv.Atoi(TempType)
-		if err != nil {
-			panic(err)
-		}
+			fmt.Println(devStateMsgs)
+			jsonStr, err := json.Marshal(devStateMsgs)
+			if err != nil {
+				log.Fatal()
+			}
+			topicdownlinkrequest := dnest + "/downlink/request"
+			fmt.Println(jsonStr)
+			client.Publish(topicdownlinkrequest, 0, false, jsonStr)
+			time.Sleep(time.Duration(3) * time.Second)
 
-		devStateMsgs := devTempMsg{3, devTempMsgData{inttemp}}
+			//ctx.JSON(Missionlives)
+		})
 
-		fmt.Println(devStateMsgs)
-		jsonStr, err := json.Marshal(devStateMsgs)
-		if err != nil {
-			log.Fatal()
-		}
-		topicdownlinkrequest := dnest + "/downlink/request"
-		fmt.Println(jsonStr)
-		client.Publish(topicdownlinkrequest, 0, false, jsonStr)
-		time.Sleep(time.Duration(3) * time.Second)
+		//照明灯电源状态获取
+		app.Get("MN_STATE/FloodlightPowerStatus", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
 
-		//ctx.JSON(Missionlives)
-	})
+			dnest := ctx.URLParam("dnest")
+			devStateMsgs := devStateMsg{2, devStateMsgData{5}}
 
-	app.Run(iris.Addr(":10901"))
+			fmt.Println(devStateMsgs)
+			jsonStr, err := json.Marshal(devStateMsgs)
+			if err != nil {
+				log.Fatal()
+			}
+			topicdownlinkrequest := dnest + "/downlink/request"
+			fmt.Println(jsonStr)
+			client.Publish(topicdownlinkrequest, 0, false, jsonStr)
+			time.Sleep(time.Duration(3) * time.Second)
+
+			//ctx.JSON(Missionlives)
+		})
+
+		//获取空调温度
+		app.Get("MN_STATE/AirCdtTemp", func(ctx iris.Context) {
+			fmt.Print("/MN_ACTION/AndroidPowerStatus/============= \n")
+			// ctx.Header("Access-Control-Allow-Origin", "*")
+			// if ctx.Request().Method == "OPTIONS" {
+			// 	ctx.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
+			// 	ctx.Header("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization")
+			// 	ctx.StatusCode(204)
+			// 	return
+			// }
+			// ctx.Next()
+
+			dnest := ctx.URLParam("dnest")
+			TempType := ctx.Params().Get("temptype")
+			inttemp, err := strconv.Atoi(TempType)
+			if err != nil {
+				panic(err)
+			}
+
+			devStateMsgs := devTempMsg{3, devTempMsgData{inttemp}}
+
+			fmt.Println(devStateMsgs)
+			jsonStr, err := json.Marshal(devStateMsgs)
+			if err != nil {
+				log.Fatal()
+			}
+			topicdownlinkrequest := dnest + "/downlink/request"
+			fmt.Println(jsonStr)
+			client.Publish(topicdownlinkrequest, 0, false, jsonStr)
+			time.Sleep(time.Duration(3) * time.Second)
+
+			//ctx.JSON(Missionlives)
+		})
+	}
+	app.Run(iris.Addr(":10901"), iris.WithoutPathCorrectionRedirection)
 }
 
 //控制空调开关
@@ -1240,7 +1369,7 @@ func MissionRequest(dnest string, cmd int, bMission bool) {
 	switch bMission {
 	case false:
 		{
-
+			return
 		}
 	case true:
 		{
@@ -1252,13 +1381,42 @@ func MissionRequest(dnest string, cmd int, bMission bool) {
 					for range timer.C {
 						if g_HGheartMap[dnest].Canopy == 2 {
 
+							if g_HGStatusMap[dnest] == STATUS_MISSION_START {
+								//无人机开机
+								go pushOperationModule(dnest, 1, 4, 124, 0, 0, 0, 0, 0, false)
+								g_HGStatusMap[dnest] = STATUS_HG_OPENING
+							} else if g_HGStatusMap[dnest] == STATUS_UAV_RETURN && g_HGheartMap[dnest].Posbar == 1 {
+								//充电杆放开
+								go pushOperationModule(dnest, 1, 3, 82, 0, 0, 0, 0, 0, false)
+							}
 							//无人机开机
-							pushOperationModuleMsg(dnest, 1, 4, 124, 0, 0, 0, 0, 0, true)
+							//go pushOperationModuleMsg(dnest, 1, 4, 124, 0, 0, 0, 0, 0, true)
 
-							time.Sleep(time.Duration(20) * time.Second)
+							//time.Sleep(time.Duration(10) * time.Second)
 
-							AH_mission_response(dnest, "开库成功", 200, "airport_open")
-							return
+							// _tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[dnest].Charge))
+							// fmt.Println("cmd41:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
+							// if _UavState == 1 {
+							// 	AH_mission_response(dnest, "开库成功，无人机开机成功", 200, "airport_open")
+							// } else {
+							// 	AH_mission_response(dnest, "开库成功,无人机飞机开机失败", 400, "airport_open")
+							// }
+							fmt.Println("sssssssg_HGStatusMap[dnest] : ", g_HGStatusMap[dnest])
+							if g_HGStatusMap[dnest] == STATUS_HG_OPENING {
+								_tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[dnest].Charge))
+								fmt.Println("cmd41:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
+								AH_mission_response(dnest, "开库成功", 200, "airport_open")
+								g_HGStatusMap[dnest] = STATUS_HG_OPEN
+								return
+							} else if g_HGStatusMap[dnest] == STATUS_UAV_RETURN {
+								if g_HGheartMap[dnest].Posbar == 1 {
+									AH_mission_response(dnest, "开库成功", 200, "airport_open")
+								}
+								return
+							}
+							//AH_mission_response(dnest, "开库成功，无人机开机成功", 200, "airport_open")
+							//AH_mission_response(dnest, "开库成功", 200, "airport_open")
+							//return
 						} else {
 							if timeOut >= 150 {
 								AH_mission_response(dnest, "开库超时", 400, "airport_open")
@@ -1268,108 +1426,260 @@ func MissionRequest(dnest string, cmd int, bMission bool) {
 						timeOut++
 					}
 				}
+				return
 			case 42:
 				{
 					timeOut := 0
 					timer := time.NewTicker(1 * time.Second)
 					for range timer.C {
 						if g_HGheartMap[dnest].Canopy == 1 {
-
 							AH_mission_response(dnest, "关库成功", 200, "airport_close")
+							g_HGStatusMap[dnest] = STATUS_CLOSEED
 							return
 						} else {
 							if timeOut >= 150 {
 								AH_mission_response(dnest, "关库超时", 400, "airport_close")
+
 								return
 							}
 						}
 						timeOut++
 					}
 				}
+				return
 			case 81: //归中杆收
 				{
 					timeOut := 0
 					timer := time.NewTicker(1 * time.Second)
 					for range timer.C {
 						if g_HGheartMap[dnest].Posbar == 2 {
-
-							AH_mission_response(dnest, "充电杆收紧", 200, "")
+							go pushOperationModule(dnest, 1, 4, 125, 0, 0, 0, 0, 0, false)
+							AH_mission_response(dnest, "充电杆收紧,无人机关机", 200, "chargebar_close")
 							return
 						} else {
 							if timeOut >= 150 {
-								AH_mission_response(dnest, "充电杆收紧超时", 400, "")
+								AH_mission_response(dnest, "充电杆收紧超时", 400, "chargebar_close")
 								return
 							}
 						}
 						timeOut++
 					}
 				}
+				return
 			case 82: //归中杆放
 				{
+					//fmt.Println("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccc82:")
 					timeOut := 0
 					timer := time.NewTicker(1 * time.Second)
 					for range timer.C {
 						if g_HGheartMap[dnest].Posbar == 1 {
 
-							AH_mission_response(dnest, "充电杆放开", 200, "")
+							AH_mission_response(dnest, "充电杆放开", 200, "chargebar_open")
 							return
 						} else {
 							if timeOut >= 150 {
-								AH_mission_response(dnest, "充电杆放开超时", 400, "")
+								AH_mission_response(dnest, "充电杆放开超时", 400, "chargebar_open")
 								return
 							}
 						}
 						timeOut++
 					}
 				}
+				return
 			case 121: //开始充电
 				{
+					if g_HGheartMap[dnest].Posbar != 2 {
+						AH_mission_response(dnest, "充电杆未收紧", 400, "")
+						return
+					}
+
 					timeOut := 0
 					timer := time.NewTicker(1 * time.Second)
 					for range timer.C {
-						if g_HGheartMap[dnest].Charge == 64 {
-
-							AH_mission_response(dnest, "开始充电", 200, "")
-							return
-						} else {
-							if timeOut >= 150 {
-								AH_mission_response(dnest, "充电失败", 400, "")
-								return
+						_tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[dnest].Charge))
+						fmt.Println("cmd121:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
+						switch _tps {
+						case UNCHARGED0:
+							{
+								//AH_mission_response(dnest, _chargeStr, 400, "")
+								//return
+							}
+							//fallthrough
+						case UNCHARGED1:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+							//fallthrough
+						case UNCHARGED2:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+							//fallthrough
+						case UNCHARGED3:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+							//fallthrough
+						case UNCHARGED4:
+							{
+								AH_mission_response(dnest, _chargeStr, 200, "")
+								g_HGStatusMap[dnest] = STATUS_UAV_CHARGING
+								//return
+							}
+							//fallthrough
+						case UNCHARGED5:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+							//fallthrough
+						case UNCHARGED6:
+							{
+								AH_mission_response(dnest, _chargeStr, 200, "")
+								g_HGStatusMap[dnest] = STATUS_UAV_CHARGING
+								//return
+							}
+							//fallthrough
+						case UNCHARGED7:
+							{
+								AH_mission_response(dnest, _chargeStr, 200, "")
+								g_HGStatusMap[dnest] = STATUS_UAV_CHARGING_DONE
+							}
+							//fallthrough
+						case UNCHARGED8:
+							{
+								AH_mission_response(dnest, _chargeStr, 400, "")
+								g_HGStatusMap[dnest] = STATUS_UAV_CHARGING_ABNORMAL
+							}
+							//fallthrough
+						default:
+							{
+								if timeOut >= 150 {
+									AH_mission_response(dnest, "充电失败", 400, "")
+									g_HGStatusMap[dnest] = STATUS_UAV_CHARGING_ABNORMAL
+									return
+								}
 							}
 						}
+						// if g_HGheartMap[dnest].Charge == 64 {
+
+						// 	AH_mission_response(dnest, "开始充电", 200, "")
+						// 	return
+						// } else {
+						// 	if timeOut >= 150 {
+						// 		AH_mission_response(dnest, "充电失败", 400, "")
+						// 		return
+						// 	}
+						// }
 						timeOut++
 					}
 				}
+				return
 			case 123: //停止充电
 				{
 					timeOut := 0
 					timer := time.NewTicker(1 * time.Second)
 					for range timer.C {
-						if g_HGheartMap[dnest].Charge == 2 {
-
-							AH_mission_response(dnest, "停止充电", 200, "")
-							return
-						} else {
-							if timeOut >= 150 {
-								AH_mission_response(dnest, "停止充电失败", 400, "")
+						_tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[dnest].Charge))
+						fmt.Println("cmd123:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
+						switch _tps {
+						case UNCHARGED0:
+							{
+								AH_mission_response(dnest, _chargeStr, 200, "")
 								return
 							}
+						case UNCHARGED1:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+						case UNCHARGED2:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+						case UNCHARGED3:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+						case UNCHARGED4:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+								//return
+							}
+						case UNCHARGED5:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+						case UNCHARGED6:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+								//return
+							}
+						case UNCHARGED7:
+							{
+								//AH_mission_response(dnest, _chargeStr, 200, "")
+							}
+						case UNCHARGED8:
+							{
+								AH_mission_response(dnest, _chargeStr, 400, "")
+							}
+						default:
+							{
+								if timeOut >= 150 {
+									AH_mission_response(dnest, "停止充电失败", 400, "")
+									return
+								}
+							}
 						}
+						// if g_HGheartMap[dnest].Charge == 64 {
+
+						// 	AH_mission_response(dnest, "开始充电", 200, "")
+						// 	return
+						// } else {
+						// 	if timeOut >= 150 {
+						// 		AH_mission_response(dnest, "充电失败", 400, "")
+						// 		return
+						// 	}
+						// }
 						timeOut++
 					}
 				}
+				return
 			case 124: //无人机开机
 				{
 
 				}
+				return
 			case 125: //无人机关机
 				{
-
+					_tps, _chargeStr, _powerState, _UavState := convert_charge(uint8(g_HGheartMap[dnest].Charge))
+					fmt.Println("cmd41:::::::::::::::::::::_tps:", _tps, "_chargeStr:", _chargeStr, "_powerState:", _powerState, "_UavState:", _UavState)
+					// if _UavState == 2 {
+					// 	//AH_mission_response(dnest, "开库成功，无人机开机成功", 200, "airport_open")
+					// 	go pushOperationModuleMsg(dnest, 1, 2, 42, 0, 0, 0, 0, 0, true) //关库
+					// } else {
+					// 	AH_mission_response(dnest, "无人机关机失败", 400, "airport_close")
+					// }
+					AH_mission_response(dnest, "无人机关机成功", 200, "airport_close")
 				}
 			}
 
 		}
 	}
+}
+
+func pushOperationModule(dnest string, sid int, rid int, cmd int, p1 int, p2 int, p3 int, p4 int, p5 int, bMission bool) {
+
+	//OMdata := k3MsgData{sid, rid, cmd, p1, p2, p3, p4, p5}
+	OMMsg := k3Msg{8, k3MsgData{sid, rid, cmd, p1, p2, p3, p4, p5}}
+
+	fmt.Println(OMMsg)
+	jsonStr, err := json.Marshal(OMMsg)
+	if err != nil {
+		log.Fatal()
+	}
+
+	topiclinkrequest := dnest + "/downlink/request"
+	fmt.Println(topiclinkrequest)
+	client.Publish(topiclinkrequest, 0, false, jsonStr)
 }
 
 //设备信息指令
@@ -1387,9 +1697,12 @@ func pushOperationModuleMsg(dnest string, sid int, rid int, cmd int, p1 int, p2 
 	topiclinkrequest := dnest + "/downlink/request"
 	fmt.Println(topiclinkrequest)
 	client.Publish(topiclinkrequest, 0, false, jsonStr)
-	time.Sleep(time.Duration(3) * time.Second)
+	//time.Sleep(time.Duration(3) * time.Second)
 
-	go MissionRequest(dnest, cmd, bMission)
+	if bMission == true {
+		go MissionRequest(dnest, cmd, bMission)
+	}
+	//go MissionRequest(dnest, cmd, bMission)
 	// switch bMission {
 	// case false:
 	// 	{
@@ -1508,7 +1821,7 @@ func pushOperationModuleMsg(dnest string, sid int, rid int, cmd int, p1 int, p2 
 }
 
 func AH_mission_response(dnest string, reqdata string, reqstatus int, Mtype string) {
-	fmt.Println("AH_mission_response -------------------- ")
+	fmt.Println("AH_mission_response -------------------- ", Mtype)
 	reqData := reqdata
 	newInterface := interface{}(reqData).(string)
 
@@ -1592,18 +1905,18 @@ func DNESTPublish() {
 	//}
 }
 
-type ChargedType uint8
+type ChargedType int
 
 const (
-	UNCHARGED0 ChargedType = 0x00
-	UNCHARGED1 ChargedType = 0x01
-	UNCHARGED2 ChargedType = 0x02
-	UNCHARGED3 ChargedType = 0x03
-	UNCHARGED4 ChargedType = 0x04
-	UNCHARGED5 ChargedType = 0x05
-	UNCHARGED6 ChargedType = 0x06
-	UNCHARGED7 ChargedType = 0x07
-	UNCHARGED8 ChargedType = 0x08
+	UNCHARGED0 ChargedType = 0
+	UNCHARGED1 ChargedType = 1
+	UNCHARGED2 ChargedType = 2
+	UNCHARGED3 ChargedType = 3
+	UNCHARGED4 ChargedType = 4
+	UNCHARGED5 ChargedType = 5
+	UNCHARGED6 ChargedType = 6
+	UNCHARGED7 ChargedType = 7
+	UNCHARGED8 ChargedType = 8
 
 // 	0x00：未充电
 // 0x01：快充启动
@@ -1616,60 +1929,68 @@ const (
 // 0x08：故障
 )
 
-func convert_charge(charge int) (string, uint8, uint8) {
-	uint8 validValue = charge & 0x000000FF
-	uint8 low4BitValue = validValue & 0x0F
+func convert_charge(charge uint8) (ChargedType, string, uint8, uint8) {
+	//a := Int64ToBytes(charge)
+
+	validValue := charge & 0x000000FF
+	low4BitValue := validValue & 0x0F
 	var chargestate string
+	// if low4BitValue == 0x00 {
+	// 	chargestate = "未充电"
+	// } else if low4BitValue == 0x01 {
+
+	// }
+	var tp ChargedType
 	switch low4BitValue {
-	case UNCHARGED0:
+	case 0x00:
 		{
 			chargestate = "未充电"
+			tp = UNCHARGED0
 		}
-		break
-	case UNCHARGED1:
+	case 0x01:
 		{
 			chargestate = "快充启动"
+			tp = UNCHARGED1
 		}
-		break
-	case UNCHARGED2:
+	case 0x02:
 		{
 			chargestate = "慢充启动"
+			tp = UNCHARGED2
 		}
-		break
-	case UNCHARGED3:
+	case 0x03:
 		{
 			chargestate = "快充初始化"
+			tp = UNCHARGED3
 		}
-		break
-	case UNCHARGED4:
+	case 0x04:
 		{
 			chargestate = "快充中"
+			tp = UNCHARGED4
 		}
-		break
-	case UNCHARGED5:
+	case 0x05:
 		{
 			chargestate = "慢充初始化"
+			tp = UNCHARGED5
 		}
-		break
-	case UNCHARGED6:
+	case 0x06:
 		{
 			chargestate = "慢充中"
+			tp = UNCHARGED6
 		}
-		break
-	case UNCHARGED7:
+	case 0x07:
 		{
 			chargestate = "充电完成"
+			tp = UNCHARGED7
 		}
-		break
-	case UNCHARGED8:
+	case 0x08:
 		{
 			chargestate = "故障"
+			tp = UNCHARGED8
 		}
-		break
 	}
 
-	uint8 valueBit4_5 = (validValue >> 4) & 0x03 //
-	uint8 valueBit6_7 = (validValue >> 6)
+	valueBit4_5 := (validValue >> 4) & 0x03 //
+	valueBit6_7 := (validValue >> 6)
 
-	return chargestate, valueBit4_5, valueBit6_7
+	return tp, chargestate, valueBit4_5, valueBit6_7
 }
