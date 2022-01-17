@@ -141,8 +141,8 @@ type WarningMsg struct {
 //机库心跳包
 type HGHeartMsg struct {
 	HGSerialcode string  `json:"device_id"`    //设备序列号
-	Canopy       int     `json:"canopy"`       //防雨盖状态
-	Posbar       int     `json:"posbar"`       //归中杆位置状态
+	Canopy       int     `json:"canopy"`       //防雨盖状态 1关，2开
+	Posbar       int     `json:"posbar"`       //归中杆位置状态 1收紧，2放开
 	Sensor       int     `json:"sensor"`       //传感器故障状态码
 	Motor        int     `json:"motor"`        //电机故障状态码
 	Charge       int     `json:"charge"`       //充电及电池相关状态
@@ -430,7 +430,7 @@ var onMessage mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 			//处理找到的value
 			fmt.Println(value)
 			//g_HGMissionMap[msgMission.DeviceID] = &msgMission
-			fmt.Println("qqqqqqqqqqqqqqqqqqqqqqqqqqqqqmsgMission.MType : ", msgMission.MType)
+			fmt.Println("qqqqqqqqqqqqqqqqqqqqqqqqqqqqqmsgMission.MType : ", msgMission.MType, "g_HGMissionList len:", g_HGMissionList)
 			g_HGMissionList.PushBack(msgMission)
 			switch {
 			case msgMission.MType == "airport_check": //自检
@@ -629,9 +629,11 @@ func AH_HG_Inspectionself(HGDev string) {
 						log.Fatal()
 					}
 
-					client.Publish(topocAHresponse, 2, false, jsonMissionStr)
-
+					fmt.Print("g_HGMissionList 1=======------------- :", g_HGMissionList.Len())
 					g_HGMissionList.Remove(i)
+					fmt.Print("g_HGMissionList 2=======------------- :", g_HGMissionList.Len())
+
+					client.Publish(topocAHresponse, 2, false, jsonMissionStr)
 
 					return
 				}
@@ -1870,12 +1872,18 @@ func AH_mission_response(dnest string, reqdata string, reqstatus int, Mtype stri
 
 }
 
+var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
+	fmt.Printf("mqtt Connect lost: %v", err)
+}
+
 //mqtt连接
 func mqttConnect() {
 	//配置
 	clinetOptions := mqtt.NewClientOptions().AddBroker(broker)
 	clinetOptions.SetClientID(ClientID)
 	clinetOptions.SetConnectTimeout(time.Duration(60) * time.Second)
+	clinetOptions.OnConnectionLost = connectLostHandler
+	clinetOptions.SetKeepAlive(60)
 	//连接
 	client = mqtt.NewClient(clinetOptions)
 	//客户端连接判断
@@ -1888,11 +1896,11 @@ func mqttConnect() {
 
 //mqtt订阅
 func mqttSubScribe(topic string, qos byte) {
-	defer wg.Done()
-	for {
-		token := client.Subscribe(topic, qos, onMessage)
-		token.Wait()
-	}
+	//defer wg.Done()
+	//for {
+	token := client.Subscribe(topic, qos, onMessage)
+	token.Wait()
+	//}
 }
 
 //获取序列码
