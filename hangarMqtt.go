@@ -100,7 +100,7 @@ type devTempResultMsg struct {
 const broker = "mqtt://121.40.120.163:1883"
 const username = "client"
 const password = "UJqmsq"
-const ClientID = "AH_Machine_nest_ccy"
+const ClientID = "AH_Machine_nest"
 
 var topiclinkresponse string
 var topicuplinkheartbeat string
@@ -1884,6 +1884,8 @@ func mqttConnect() {
 	clinetOptions.SetConnectTimeout(time.Duration(60) * time.Second)
 	clinetOptions.OnConnectionLost = connectLostHandler
 	clinetOptions.SetKeepAlive(60)
+	clinetOptions.SetAutoReconnect(true)
+	clinetOptions.SetConnectRetry(true)
 	//连接
 	client = mqtt.NewClient(clinetOptions)
 	//客户端连接判断
